@@ -67,6 +67,27 @@ mean Dice **0.488 → 0.713** and ET from **0.0 → 0.73**.
 *Takeaway: always inspect `np.unique(labels)` and per-channel voxel counts before
 trusting a dataset's label transform.*
 
+### 3.2 Predicted vs ground truth
+
+![Predicted vs ground-truth segmentation](pred_vs_gt_segmentation.png)
+
+*Each row is one patient — the best, a typical (median), and the worst case by Dice
+score. **Ground truth** (green) is the tumour region an expert radiologist outlined by
+hand; **Predicted** (red) is what the model produced with no human input. The **error
+map** compares them: green = correct, red = tumour the model missed, orange = tissue
+the model wrongly flagged. A near-perfect result is almost all green (see "Best", Dice
+0.97). Even the worst case (0.80) captures the tumour, with the main error being edge
+over-segmentation.*
+
+![Predicted vs expert tumour volume](pred_vs_gt_volume.png)
+
+*Each dot is one of 235 patients. The horizontal axis is the tumour volume the expert
+measured; the vertical axis is the volume the model measured. The dashed line is perfect
+agreement — the tighter the dots hug it, the more accurately the model measures tumour
+size. Correlations are high across all sub-regions (TC r=0.98, WT r=0.97, ET r=0.93),
+confirming the model measures tumour burden — not just location — reliably, which is
+what makes the downstream survival features trustworthy.*
+
 ## 4. Survival prediction
 
 **Task.** 3-class overall survival, per the BraTS challenge convention:

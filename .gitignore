@@ -31,6 +31,7 @@ eda.html
 sample_slice.png
 survival_*.png
 gradcam_overlays.png
+pred_vs_gt_dice_dist.png
 survival_features_unet.csv
 survival_model.joblib
 
