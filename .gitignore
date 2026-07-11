@@ -23,6 +23,18 @@ __pycache__/
 
 # personal notes (not for the public repo)
 write_up
+ACCESS.md                 # remote-server-specific access instructions
+*.docx                    # project proposal / personal docs
+
+# generated artifacts — regenerate via the scripts (keep repo to source only)
+eda.html                  # export of eda.ipynb
+sample_slice.png          # from verify_data.py
+survival_*.png            # from train_survival.py
+survival_model.joblib     # from save_survival_model.py
+
+# superseded / helper scripts (kept locally, not tracked)
+load_data.py              # early downloader; superseded by data_pipeline + README
+build_eda.py              # generator for eda.ipynb (the notebook is the artifact)
 
 # OS
 .DS_Store
