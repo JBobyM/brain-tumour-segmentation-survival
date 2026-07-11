@@ -1,25 +1,107 @@
 # Brain Tumour Segmentation & Survival Prediction from MRI
 
-An end-to-end deep-learning pipeline for brain-tumour MRI: **3D segmentation →
-tumour-feature extraction → survival stratification → explainability →
-interactive demo**. Built with PyTorch and [MONAI](https://monai.io/).
+An end-to-end deep-learning pipeline that reads raw multi-modal brain MRI, segments
+tumour sub-regions, predicts patient survival, and explains its reasoning — packaged
+as an interactive demo. Built with **PyTorch** and **[MONAI](https://monai.io/)**.
 
-The goal is a production-shaped, demonstrable clinical-imaging pipeline that
-ingests raw NIfTI volumes, handles class imbalance correctly, and produces
-interpretable, auditable output — not a notebook fit to a clean benchmark.
+![Grad-CAM overlays](gradcam_overlays.png)
 
 ---
 
-## What it does
+## 1 · The Clinical Problem
 
-| Stage | Method | Result |
+Gliomas are among the most aggressive brain tumours, and MRI is central to diagnosing
+them, planning treatment, and estimating prognosis. Two tasks consume significant
+specialist time and carry real clinical weight:
+
+- **Tumour delineation.** Radiologists manually outline the tumour and its sub-regions
+  (enhancing tumour, necrotic core, surrounding edema) across dozens of 2D slices per
+  patient — slow, labour-intensive, and subject to inter-rater variability. Consistent,
+  automated, *quantitative* tumour measurement supports surgical planning and tracking
+  response to therapy.
+- **Prognosis.** Estimating a patient's likely survival window helps guide treatment
+  intensity and patient counselling. Doing this from imaging + basic clinical data,
+  reproducibly, is directly useful to a tumour board.
+
+For a hospital, the value is **faster, more consistent tumour quantification** and a
+**transparent, auditable** survival estimate a clinician can actually trust.
+
+## 2 · The Technical Bottleneck
+
+Medical imaging is *not* natural-image computer vision. What makes this hard:
+
+- **3-D, multi-modal data.** Each case is a 240×240×155 volume across **four** MRI
+  sequences (FLAIR, T1, T1ce, T2). Models must be 3D — memory- and compute-heavy —
+  not 2D.
+- **Severe class imbalance.** Tumour is only **~0.2–3 % of each volume** (measured in
+  the EDA). A model trained with plain cross-entropy can score high accuracy by
+  predicting "healthy" everywhere.
+- **Interpretability bar.** Clinicians won't act on an unexplained output, so the
+  pipeline must *show its work*.
+- **Messy, real-world data.** Scanner-dependent intensity scales, differing label
+  conventions between datasets, and the fact that the segmentation dataset has **no
+  survival labels** at all — each a trap that silently corrupts results if unhandled.
+
+## 3 · The Solution & Engineering Choices
+
+| Decision | Why |
+|---|---|
+| **3D U-Net** (MONAI) | Standard, strong encoder–decoder for volumetric segmentation; skip-connections preserve fine tumour boundaries. |
+| **Dice Loss** (not cross-entropy) | Directly optimises region overlap, which is robust to the severe foreground/background imbalance. |
+| **Multi-label sigmoid** (3 overlapping regions) | TC/WT/ET are nested, not mutually exclusive — sigmoid + per-channel Dice models this correctly. |
+| **Sliding-window inference** | Train on 128³ patches (fits VRAM), evaluate on full volumes without downsampling. |
+| **AMP + DataParallel** | Mixed precision + 2× RTX 3090 to train efficiently. |
+| **Survival: features → Random Forest, 3-class** | With only ~235 labelled cases, interpretable tumour features + a small model beats a data-hungry deep regressor; classification is more robust than noisy day-level regression. |
+| **Grad-CAM** | Visual audit that the segmentation model attends to the tumour. |
+
+**Two engineering findings worth highlighting** (full detail in [`REPORT.md`](REPORT.md)):
+
+1. **A silent label-convention bug.** MONAI's built-in BraTS label transform assumes
+   labels `1/2/4`, but the Decathlon dataset uses `1/2/3`. The mismatch produced an
+   *all-empty enhancing-tumour channel* — caught by inspecting per-channel voxel counts.
+   Fixing it lifted mean Dice **0.49 → 0.71** and enhancing-tumour Dice **0.0 → 0.73**.
+2. **Grad-CAM's limits on segmentation nets.** Measured attention was diffuse at every
+   layer (Grad-CAM is built for classification). Reported honestly, with the predicted
+   mask as the precise localiser — understanding a method's assumptions, not just its API.
+
+*Cross-dataset design:* segmentation is trained on the Medical Segmentation Decathlon
+(Task01), and — because Decathlon deliberately breaks the link to patient outcomes —
+survival is modelled on **BraTS 2020**, which ships imaging *and* survival labels.
+
+## 4 · The Metrics That Matter
+
+**Segmentation — clinical accuracy** (voxel-level, 30-volume validation subset;
+full-validation mean Dice = **0.71**):
+
+| Region | Dice | Sensitivity | Specificity |
+|---|---|---|---|
+| Tumour core (TC) | 0.73 | 0.88 | 0.998 |
+| Whole tumour (WT) | 0.73 | **0.95** | 0.993 |
+| Enhancing tumour (ET) | 0.80 | 0.84 | 0.999 |
+
+High **sensitivity** means the model catches the large majority of true tumour voxels
+(the clinically costly errors are missed tumour); specificity is near-perfect, aided by
+the class imbalance.
+
+**Segmentation — compute efficiency** (single full volume, sliding-window, AMP):
+
+| Metric | Value |
+|---|---|
+| Inference latency | **0.14 s / volume** (median 0.10 s) |
+| Peak VRAM (inference) | **1.0 GB** — runs on commodity GPUs |
+| Training | 50 epochs in ~2 h on 2× RTX 3090 |
+
+**Survival — 3-class stratification** (stratified 5-fold CV, macro one-vs-rest AUC):
+
+| Features | Accuracy | Macro AUC |
 |---|---|---|
-| **Segmentation** | 3D U-Net + Dice Loss, 4-modality MRI → 3 overlapping tumour regions (TC/WT/ET) | mean Dice **0.71** (TC 0.70 · WT 0.71 · ET 0.73) |
-| **Survival prediction** | Random Forest on tumour features + clinical covariates → 3-class survival | macro OVR-AUC **0.61** (end-to-end), 0.65 (expert masks); short-survivor AUC **0.70** |
-| **Explainability** | Grad-CAM on the segmentation encoder | whole-tumour attention overlays |
-| **Deployment** | Streamlit app | upload/select → segment → predict → explain |
+| Clinical only (baseline) | 0.41 | 0.56 |
+| **+ imaging (end-to-end)** | 0.46 | **0.61** |
+| + expert masks (upper bound) | 0.50 | 0.65 |
 
-![Grad-CAM overlays](gradcam_overlays.png)
+Imaging features add genuine prognostic signal over clinical data alone; the model is
+strongest on the clinically critical **short-survivor class (AUC 0.70)**. Absolute
+numbers match the published BraTS survival literature — a hard task, honestly reported.
 
 ---
 
@@ -27,43 +109,25 @@ interpretable, auditable output — not a notebook fit to a clean benchmark.
 
 ```
  4-modality MRI (FLAIR, T1, T1ce, T2)  .nii
-              │
+              │  preprocess: RAS · 1mm · z-score      (data_pipeline.py)
               ▼
-   ┌─────────────────────┐
-   │  Preprocessing      │  RAS orient · 1mm resample · z-score norm  (data_pipeline.py)
-   └─────────────────────┘
-              │
+     3D U-Net + Dice Loss  ──► predicted TC / WT / ET masks   (train.py)
+              │                         │
+              │                         └─► Grad-CAM explanation   (gradcam.py)
               ▼
-   ┌─────────────────────┐
-   │  3D U-Net (MONAI)   │  Dice Loss (sigmoid), 3 overlapping regions  (train.py)
-   └─────────────────────┘
-              │  predicted TC / WT / ET masks
-              ├───────────────► Grad-CAM explanation            (gradcam.py)
+   tumour features + age/resection      (extract_features.py)
               ▼
-   ┌─────────────────────┐
-   │  Feature extraction │  volumes, ratios, shape + age/resection  (extract_features.py)
-   └─────────────────────┘
-              │
+   Random Forest → 3-class survival      (train_survival.py)
               ▼
-   ┌─────────────────────┐
-   │  Random Forest      │  3-class survival (short/mid/long)      (train_survival.py)
-   └─────────────────────┘
-              │
-              ▼
-        Streamlit demo   (app.py)
+        Streamlit demo                   (app.py)
 ```
 
 ## Datasets
 
-- **Segmentation** — [Medical Segmentation Decathlon, Task01_BrainTumour](http://medicaldecathlon.com/)
-  (derived from BraTS 2016/2017; 484 labelled training volumes).
-- **Survival** — [BraTS 2020](https://www.med.upenn.edu/cbica/brats2020/) (235 cases with
-  overall-survival labels). The Decathlon volumes are deliberately re-anonymised and
-  **cannot** be linked to survival labels, so BraTS 2020 is used for the survival stage.
+- **Segmentation** — [MSD Task01_BrainTumour](http://medicaldecathlon.com/) (484 labelled volumes).
+- **Survival** — [BraTS 2020](https://www.med.upenn.edu/cbica/brats2020/) (235 cases with overall-survival labels).
 
 Both are multi-modal MRI (FLAIR, T1w, T1gd/T1ce, T2w), skull-stripped and co-registered.
-
----
 
 ## Setup
 
@@ -72,74 +136,51 @@ python3 -m venv .venv
 .venv/bin/pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 .venv/bin/pip install -r requirements.txt
 ```
+> **GPU note:** the `cu128` build matches a CUDA-12.8 (570-series) driver; the default
+> PyPI `torch` wheel targets CUDA 13 and reports `cuda.is_available() == False`.
 
-> **GPU note:** the `cu128` build is required to match a CUDA-12.8 (570-series) driver;
-> the default PyPI `torch` wheel targets CUDA 13 and will report `cuda.is_available() == False`.
-
-### Get the data
-
-```bash
-# Segmentation dataset (Decathlon Task01, ~7 GB) — HuggingFace mirror
-.venv/bin/hf download Novel-BioMedAI/Medical_Segmentation_Decathlon \
-    Task01_BrainTumour.tar --repo-type dataset --local-dir data/
-tar -xf data/Task01_BrainTumour.tar -C data/
-
-# Survival dataset (BraTS 2020, ~4.5 GB) — Kaggle mirror (needs kaggle.json)
-.venv/bin/kaggle datasets download awsaf49/brats20-dataset-training-validation \
-    -p data/brats2020 --unzip
-```
-
----
+Data download commands are in the usage section below.
 
 ## Usage
 
 ```bash
 # 0. Explore the data first (recommended starting point)
-.venv/bin/jupyter notebook eda.ipynb
+.venv/bin/jupyter notebook eda.ipynb          # or open eda.html
 
-# 1. Verify the data pipeline (saves a slice visualization)
-.venv/bin/python verify_data.py
+# segmentation dataset (Decathlon Task01, ~7 GB)
+.venv/bin/hf download Novel-BioMedAI/Medical_Segmentation_Decathlon \
+    Task01_BrainTumour.tar --repo-type dataset --local-dir data/ && tar -xf data/Task01_BrainTumour.tar -C data/
+# survival dataset (BraTS 2020, ~4.5 GB)
+.venv/bin/kaggle datasets download awsaf49/brats20-dataset-training-validation -p data/brats2020 --unzip
 
-# 2. Train the segmentation U-Net (2× GPU, ~2 h for 50 epochs)
-.venv/bin/python train.py --epochs 50 --cache-rate 0.3
-
-# 3. Extract survival features (runs the U-Net over BraTS 2020)
-.venv/bin/python extract_features.py
-
-# 4. Evaluate the survival model (5-fold CV, saves plots)
-.venv/bin/python train_survival.py
-.venv/bin/python save_survival_model.py     # persist fitted model for the demo
-
-# 5. Generate Grad-CAM explanations
-.venv/bin/python gradcam.py
-
-# 6. Launch the interactive demo
-.venv/bin/streamlit run app.py
+.venv/bin/python verify_data.py               # 1. sanity-check the pipeline
+.venv/bin/python train.py --epochs 50 --cache-rate 0.3   # 2. train segmentation
+.venv/bin/python extract_features.py          # 3. tumour features from BraTS
+.venv/bin/python train_survival.py            # 4. survival CV + plots
+.venv/bin/python save_survival_model.py       #    persist model for the demo
+.venv/bin/python gradcam.py                   # 5. explainability
+.venv/bin/streamlit run app.py                # 6. interactive demo
 ```
+
+Remote server? See [`ACCESS.md`](ACCESS.md) for SSH-tunnel instructions.
 
 ## Repository layout
 
 | File | Purpose |
 |---|---|
-| `eda.ipynb` | **Exploratory data analysis** — image properties, intensity distributions, class imbalance, tumour sizes, survival relationships |
-| `data_pipeline.py` | Transforms + DataLoaders; **custom Decathlon→BraTS label conversion** |
-| `verify_data.py` | Phase 1 slice-visualization sanity check |
+| `eda.ipynb` | Exploratory data analysis (image properties, imbalance, survival relationships) |
+| `data_pipeline.py` | Transforms + DataLoaders; custom Decathlon→BraTS label conversion |
+| `verify_data.py` | Slice-visualization sanity check |
 | `train.py` | 3D U-Net training (Dice Loss, AMP, DataParallel, W&B) |
 | `extract_features.py` | Tumour-feature extraction from predicted + expert masks |
-| `train_survival.py` | Survival classifier + CV evaluation + plots |
-| `save_survival_model.py` | Persist the fitted survival model |
+| `train_survival.py` / `save_survival_model.py` | Survival classifier: CV eval / persist model |
 | `gradcam.py` | Grad-CAM explainability |
-| `inference.py` | Shared inference helpers for the app |
-| `app.py` | Streamlit demo |
+| `measure_metrics.py` | Sensitivity/specificity + latency/VRAM benchmark |
+| `inference.py` / `app.py` | Shared inference helpers / Streamlit demo |
 
-## Results
-
-See [`REPORT.md`](REPORT.md) for full methodology, results, and limitations
-(including two honestly-documented engineering findings: a silent dataset
-label-convention bug, and the known limitations of Grad-CAM on segmentation
-networks).
+Full methodology, results, and limitations: **[`REPORT.md`](REPORT.md)**.
 
 ## License / attribution
 
-Datasets are © their respective providers (MSD, BraTS/CBICA) under their own
-licenses. This code is provided for research and portfolio demonstration.
+Datasets are © their respective providers (MSD, BraTS/CBICA) under their own licenses.
+Code provided for research and portfolio demonstration.
