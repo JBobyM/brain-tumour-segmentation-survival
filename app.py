@@ -38,7 +38,7 @@ def run_pipeline(paths, age, gtr, known):
     masks = I.segment(seg_model, img)          # (3,H,W,D) TC,WT,ET
     feat = I.features(masks)
     cls, proba = I.predict_survival(surv, age, gtr, known, feat)
-    cam = I.gradcam(seg_model, img, channel=1)  # whole-tumour
+    cam = I.explain(seg_model, img, channel=1)  # occlusion sensitivity, whole-tumour
     return dict(flair=flair, masks=masks, feat=feat, cls=cls, proba=proba, cam=cam, dice=dice)
 
 
@@ -60,7 +60,7 @@ def cam_overlay(base, cam_slice):
     vmin, vmax = (float(vals.min()), np.percentile(vals, 99.5)) if vals.size else (0, 1)
     ax.imshow(b, cmap="gray")
     ax.imshow(np.ma.masked_where(~brain, h), cmap="jet", alpha=0.5, vmin=vmin, vmax=vmax)
-    ax.axis("off"); ax.set_title("Grad-CAM (whole-tumour attention)")
+    ax.axis("off"); ax.set_title("Occlusion sensitivity (whole-tumour)")
     fig.tight_layout(); return fig
 
 
@@ -93,7 +93,7 @@ else:
 
 # ---------------- Main ----------------
 st.title("Brain Tumour Segmentation & Survival Prediction")
-st.caption("3D U-Net segmentation → tumour features → survival stratification → Grad-CAM explanation")
+st.caption("3D SegResNet segmentation → tumour features → survival stratification → occlusion-sensitivity explanation")
 
 if paths is None:
     st.warning("Upload all four modalities (FLAIR, T1, T1ce, T2) to run the pipeline.")

@@ -19,7 +19,6 @@ import torch
 import nibabel as nib
 
 from monai.inferers import sliding_window_inference
-from monai.networks.nets import UNet
 from monai.transforms import (
     Compose,
     EnsureChannelFirstd,
@@ -31,9 +30,10 @@ from monai.transforms import (
 )
 
 from data_pipeline import ROI_SIZE
+from seg_model import BEST_CKPT, load_seg_model
 
 BRATS_DIR = Path("data/brats2020/BraTS2020_TrainingData/MICCAI_BraTS2020_TrainingData")
-CKPT = Path("checkpoints/best_model.pth")
+CKPT = BEST_CKPT
 OUT_CSV = Path("survival_features.csv")
 MODALITIES = ["flair", "t1", "t1ce", "t2"]  # model's trained channel order
 
@@ -83,15 +83,9 @@ def region_features(tc, wt, et, prefix):
 
 
 def load_model(device):
-    model = UNet(
-        spatial_dims=3, in_channels=4, out_channels=3,
-        channels=(16, 32, 64, 128, 256), strides=(2, 2, 2, 2),
-        num_res_units=2, norm="instance",
-    ).to(device)
-    ckpt = torch.load(CKPT, map_location=device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    print(f"[extract] loaded Phase 2 model (val Dice={ckpt.get('dice'):.4f}, epoch {ckpt.get('epoch')})")
+    model, ckpt = load_seg_model(CKPT, device)
+    print(f"[extract] loaded {ckpt.get('arch','?')} model "
+          f"(val Dice={ckpt.get('dice'):.4f}, epoch {ckpt.get('epoch')})")
     return model
 
 

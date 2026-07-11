@@ -20,7 +20,7 @@ from monai.data import decollate_batch
 from monai.inferers import sliding_window_inference
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
-from monai.networks.nets import UNet
+from monai.networks.nets import SegResNet, UNet
 from monai.transforms import Activations, AsDiscrete, Compose
 
 from data_pipeline import ROI_SIZE, get_dataloaders
@@ -29,20 +29,31 @@ CKPT_DIR = Path("./checkpoints")
 REGIONS = ["TC", "WT", "ET"]
 
 
-def build_model(device):
-    model = UNet(
-        spatial_dims=3,
-        in_channels=4,
-        out_channels=3,
-        channels=(16, 32, 64, 128, 256),
-        strides=(2, 2, 2, 2),
-        num_res_units=2,
-        norm="instance",
-    ).to(device)
+def build_model(arch, device):
+    if arch == "unet":
+        model = UNet(
+            spatial_dims=3, in_channels=4, out_channels=3,
+            channels=(16, 32, 64, 128, 256), strides=(2, 2, 2, 2),
+            num_res_units=2, norm="instance",
+        )
+    elif arch == "segresnet":
+        model = SegResNet(
+            spatial_dims=3, in_channels=4, out_channels=3,
+            init_filters=32, blocks_down=(1, 2, 2, 4), blocks_up=(1, 1, 1),
+            dropout_prob=0.2,
+        )
+    else:
+        raise ValueError(f"unknown arch: {arch}")
+    model = model.to(device)
     if torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)
         print(f"[train] DataParallel across {torch.cuda.device_count()} GPUs")
     return model
+
+
+def ckpt_path(arch):
+    # keep the UNet baseline at the original path; segresnet gets its own file
+    return CKPT_DIR / ("best_model.pth" if arch == "unet" else f"best_model_{arch}.pth")
 
 
 def parse_args():
@@ -55,6 +66,7 @@ def parse_args():
     p.add_argument("--cache-rate", type=float, default=0.0)
     p.add_argument("--sw-batch", type=int, default=2, help="sliding-window batch size at val")
     p.add_argument("--smoke", action="store_true", help="tiny run to verify the pipeline")
+    p.add_argument("--arch", type=str, default="unet", choices=["unet", "segresnet"])
     p.add_argument("--wandb-project", type=str, default="brain-tumour-segmentation")
     p.add_argument("--run-name", type=str, default=None)
     p.add_argument(
@@ -77,8 +89,7 @@ def main():
         name=args.run_name,
         mode=args.wandb_mode if not args.smoke else "disabled",
         config={
-            "arch": "UNet3D",
-            "channels": (16, 32, 64, 128, 256),
+            "arch": args.arch,
             "in_channels": 4,
             "out_channels": 3,
             "regions": REGIONS,
@@ -101,9 +112,10 @@ def main():
         num_workers=args.num_workers,
         cache_rate=args.cache_rate,
     )
-    print(f"[train] device={device} | train batches={len(train_loader)} | val volumes={len(val_loader)}")
+    print(f"[train] device={device} | arch={args.arch} | train batches={len(train_loader)} | val volumes={len(val_loader)}")
 
-    model = build_model(device)
+    model = build_model(args.arch, device)
+    out_ckpt = ckpt_path(args.arch)
     loss_fn = DiceLoss(sigmoid=True, smooth_nr=0.0, smooth_dr=1e-5, squared_pred=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
@@ -190,8 +202,8 @@ def main():
         if mean_dice > best_dice:
             best_dice = mean_dice
             state = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
-            torch.save({"epoch": epoch, "dice": best_dice, "model": state}, CKPT_DIR / "best_model.pth")
-            print(f"[val]   new best Dice={best_dice:.4f} -> saved checkpoints/best_model.pth")
+            torch.save({"epoch": epoch, "dice": best_dice, "model": state, "arch": args.arch}, out_ckpt)
+            print(f"[val]   new best Dice={best_dice:.4f} -> saved {out_ckpt}")
             wandb.run.summary["best_dice"] = best_dice
             wandb.run.summary["best_epoch"] = epoch
 

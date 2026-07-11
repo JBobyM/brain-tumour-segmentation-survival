@@ -34,13 +34,23 @@ full volumes with sliding-window inference.
 tumour), ET (enhancing tumour) — trained as a **multi-label** problem with sigmoid
 activation (the regions are nested, not mutually exclusive).
 
-**Model.** MONAI 3D `UNet`, channels (16, 32, 64, 128, 256), residual units,
-instance norm. **Dice Loss** (sigmoid) directly optimises overlap and handles the
-severe foreground/background imbalance that would defeat plain cross-entropy.
-Trained 50 epochs, Adam + cosine LR, AMP, `DataParallel` across 2× RTX 3090.
+**Model selection.** Two architectures were trained on the identical data and
+pipeline and compared on validation Dice:
 
-**Result.** Best validation **mean Dice 0.713** (TC 0.699 · WT 0.714 · ET 0.732),
-still improving at epoch 50.
+| Architecture | Epochs | Mean Dice | TC | WT | ET |
+|---|---|---|---|---|---|
+| U-Net (baseline) | 50 | 0.713 | 0.699 | 0.714 | 0.732 |
+| **SegResNet (adopted)** | 100 | **0.834** | 0.817 | **0.885** | 0.798 |
+
+SegResNet (residual encoder–decoder, `init_filters=32`, dropout 0.2) won on every
+region and was adopted; the downstream pipeline (feature extraction, survival model,
+demo, explanations) was re-pointed to it. **Dice Loss** (sigmoid) directly optimises
+overlap and handles the severe foreground/background imbalance that would defeat plain
+cross-entropy. Trained with Adam + cosine LR, AMP, `DataParallel` across 2× RTX 3090.
+
+**Result (adopted model).** Best validation **mean Dice 0.834**. On a 30-volume
+voxel-level subset: WT Dice 0.90 / sensitivity 0.93, TC 0.86 / 0.87, ET 0.85 / 0.83;
+specificity ≈ 0.999 throughout. Inference 1.0 s/volume at 5.9 GB peak VRAM.
 
 ### 3.1 Engineering finding — a silent label-convention bug
 
@@ -63,8 +73,8 @@ trusting a dataset's label transform.*
 short (<10 mo / <300 d), mid (10–15 mo / 300–450 d), long (>15 mo / >450 d).
 Classes are reasonably balanced (89 / 59 / 86).
 
-**Features.** The Phase-2 U-Net is run end-to-end on each BraTS case to produce
-predicted masks, from which interpretable features are derived — per-region volumes
+**Features.** The segmentation model (SegResNet) is run end-to-end on each BraTS case
+to produce predicted masks, from which interpretable features are derived — per-region volumes
 (TC/WT/ET, necrotic core, edema), ratios (enhancing fraction ET/WT, core fraction),
 and whole-tumour shape (bounding-box extent, compactness) — plus clinical covariates
 (age, resection status). Features are also computed from the **expert masks** as an
@@ -78,12 +88,13 @@ cross-validation. Metric: accuracy + **macro one-vs-rest ROC-AUC** (per the prop
 | Feature set | Accuracy | Macro AUC |
 |---|---|---|
 | Clinical only (baseline) | 0.406 | 0.556 |
-| Predicted masks (end-to-end) | 0.457 | **0.608** |
+| Predicted masks (end-to-end, SegResNet) | 0.444 | **0.616** |
 | Expert masks (upper bound) | 0.500 | **0.650** |
 
 Imaging features add real prognostic signal over the clinical baseline, and the
 ordering *clinical < predicted < expert* quantifies how segmentation quality
-propagates downstream. Per-class ROC shows the model is strongest on the clinically
+propagates downstream — with SegResNet's better masks the end-to-end AUC (0.616) rose
+toward the expert-mask ceiling (0.650). Per-class ROC shows the model is strongest on the clinically
 critical **short-survivor class (AUC 0.70)**; the mid class sits near chance
 (AUC 0.50) — a well-documented difficulty in BraTS survival work. Top features are
 age, whole-tumour shape, and enhancement ratios — all clinically plausible.
@@ -93,35 +104,47 @@ These absolute numbers are **in line with the published BraTS survival literatur
 genuinely hard; the value here is a well-characterised, honestly-reported result with
 a clear baseline → imaging → upper-bound story.
 
-## 5. Explainability
+## 5. Explainability — measured, not assumed
 
-Grad-CAM was applied to the segmentation U-Net's encoder to visualise which regions
-drive the whole-tumour prediction. **Finding:** Grad-CAM — designed for classification
-CNNs — produces *diffuse* maps on a 3D segmentation network. Measured attention was not
-tumour-focused at any encoder depth (inside/outside-tumour ratio ≤ 1; the deepest
-bottleneck actively anti-localised). Using a 128-channel mid-encoder layer with
-per-case contrast gives the most usable result: attention concentrates on the
-**tumour-bearing hemisphere**, while the predicted segmentation mask provides the
-precise boundary. Occlusion sensitivity would be a better-suited method and is a
-natural extension.
+Rather than present a heatmap and assume it is meaningful, explanation quality was
+**quantified** against ground-truth tumour masks (N=20) with three localisation
+metrics: *concentration* (heat energy inside tumour ÷ tumour volume fraction; >1 beats
+random), *pointing game* (does the hottest voxel fall in the tumour?), and
+*inside/outside* (mean heat inside vs outside tumour).
+
+| Method | Concentration | Pointing game | Inside/outside |
+|---|---|---|---|
+| **Grad-CAM** | 0.9× | 0% | 0.9× |
+| **Occlusion sensitivity** | **6.2×** | **50%** | **8.6×** |
+
+**Grad-CAM fails on this task.** Designed for classification CNNs, it produces diffuse
+maps on a segmentation network (a per-voxel, context-driven decision); its
+concentration of 0.9× is *worse than random* and its peak never lands in the tumour.
+**Occlusion sensitivity** — mask a region, measure the drop in predicted tumour mass —
+is perturbation-based and suited to segmentation: it concentrates 6.2× on the tumour
+and its peak lands inside half the time (the tumour is only ~6% of the brain). It is
+the adopted explanation method; the Grad-CAM analysis is retained as a documented
+negative result. For speed the perturbation loop runs on a 2× downsampled volume
+(~8 s/case) and the map is upsampled back.
 
 ## 6. Deployment
 
 A Streamlit app (`app.py`) exposes the full pipeline: select a bundled sample case or
 upload four modalities → segmentation overlay with a slice slider → survival class and
-probabilities (with ground-truth comparison for samples) → Grad-CAM overlay → tumour
-volume metrics.
+probabilities (with ground-truth comparison for samples) → occlusion-sensitivity
+overlay → tumour volume metrics.
 
 ## 7. Limitations & future work
 
-- **Segmentation** trained on Decathlon and applied to BraTS 2020 (domain shift);
-  the model slightly over-segments. Fine-tuning on BraTS, larger patches, longer
-  training, or SegResNet would raise Dice (WT toward ~0.85).
+- **Segmentation** is trained on Decathlon and applied to BraTS 2020 (a domain shift).
+  Adopting SegResNet already lifted WT Dice to 0.89; fine-tuning directly on BraTS or
+  larger patches could close the residual gap further.
 - **Survival** has small N (235; ~118 GTR-only) and modest AUC, consistent with the
   literature. Deep encoder features, radiomics, or a survival-analysis model (Cox /
   time-to-event) are natural next steps.
-- **Explainability** would benefit from occlusion sensitivity or SHAP on the survival
-  features (feature importances are already reported).
+- **Explainability** now uses occlusion sensitivity (validated at 6.2× concentration).
+  SHAP on the survival features would extend interpretability to the prognosis stage
+  (feature importances are already reported).
 
 ## 8. Reproducibility
 

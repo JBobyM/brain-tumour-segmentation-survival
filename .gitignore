@@ -30,6 +30,8 @@ ACCESS.md
 eda.html
 sample_slice.png
 survival_*.png
+gradcam_overlays.png
+survival_features_unet.csv
 survival_model.joblib
 
 # superseded / helper scripts (kept locally, not tracked)

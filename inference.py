@@ -11,32 +11,24 @@ import numpy as np
 import torch
 
 from monai.inferers import sliding_window_inference
-from monai.networks.nets import UNet
 from monai.transforms import (
     Compose, EnsureChannelFirstd, EnsureTyped, LoadImaged,
     NormalizeIntensityd, Orientationd, Spacingd,
 )
-from monai.visualize import GradCAM
 
 from data_pipeline import ROI_SIZE
 from extract_features import region_features
-from gradcam import TARGET_CHANNELS, find_target_layer
+from occlusion import occlusion_map
+from seg_model import BEST_CKPT, load_seg_model
 
 MODALITIES = ["flair", "t1", "t1ce", "t2"]
-CKPT = "checkpoints/best_model.pth"
+CKPT = BEST_CKPT
 SURV = "survival_model.joblib"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_seg_model():
-    model = UNet(
-        spatial_dims=3, in_channels=4, out_channels=3,
-        channels=(16, 32, 64, 128, 256), strides=(2, 2, 2, 2),
-        num_res_units=2, norm="instance",
-    ).to(DEVICE)
-    ckpt = torch.load(CKPT, map_location=DEVICE)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
+    model, ckpt = load_seg_model(CKPT, DEVICE)
     return model, float(ckpt.get("dice", float("nan")))
 
 
@@ -68,14 +60,14 @@ def features(masks):
     return region_features(masks[0], masks[1], masks[2], "pred")
 
 
-def gradcam(model, img, channel=1):
-    """Grad-CAM heatmap (H,W,D) in [0,1] for the given output channel."""
-    cam = GradCAM(nn_module=model, target_layers=find_target_layer(model, TARGET_CHANNELS))
-    H, W, D = img.shape[2:]
-    ph, pw, pd = (-H) % 16, (-W) % 16, (-D) % 16
-    img_pad = torch.nn.functional.pad(img, (0, pd, 0, pw, 0, ph))
-    cm = cam(x=img_pad, class_idx=channel)[0, 0, :H, :W, :D]
-    return cm.detach().cpu().numpy()
+def explain(model, img, channel=1):
+    """Occlusion-sensitivity heatmap (H,W,D) in [0,1] for the given channel.
+
+    Replaces Grad-CAM, which was measured to not localize on this segmentation
+    model (concentration 0.91x, 0% pointing game). Occlusion is perturbation-
+    based and suited to segmentation.
+    """
+    return occlusion_map(model, img, channel=channel)
 
 
 def load_survival():

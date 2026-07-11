@@ -8,8 +8,8 @@ import numpy as np
 import torch
 
 from monai.inferers import sliding_window_inference
-from monai.networks.nets import UNet
 from data_pipeline import get_dataloaders, ROI_SIZE
+from seg_model import load_seg_model
 
 N_CASES = 30
 REGIONS = ["TC", "WT", "ET"]
@@ -17,11 +17,8 @@ REGIONS = ["TC", "WT", "ET"]
 
 def main():
     dev = torch.device("cuda")
-    model = UNet(spatial_dims=3, in_channels=4, out_channels=3,
-                 channels=(16, 32, 64, 128, 256), strides=(2, 2, 2, 2),
-                 num_res_units=2, norm="instance").to(dev)
-    model.load_state_dict(torch.load("checkpoints/best_model.pth", map_location=dev)["model"])
-    model.eval()
+    model, ckpt = load_seg_model(device=dev)
+    print(f"[metrics] {ckpt.get('arch','?')} model, val Dice {ckpt.get('dice'):.3f}")
 
     _, val_loader = get_dataloaders(batch_size=1, num_workers=4)
 
