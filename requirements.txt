@@ -1,0 +1,21 @@
+# Python 3.13
+#
+# NOTE: torch must be the CUDA 12.8 build to match a 570-series driver.
+# Install it FIRST, from the PyTorch index, then the rest:
+#
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements.txt
+#
+torch==2.11.0            # install via the cu128 index above (see note)
+monai==1.6.0
+nibabel==5.4.2
+numpy==2.5.1
+pandas==3.0.3
+scikit-learn==1.9.0
+matplotlib==3.11.0
+streamlit==1.59.1
+joblib==1.5.3
+wandb==0.28.0
+requests==2.34.2         # required by MONAI's dataset downloader
+huggingface_hub          # dataset download (Task01 mirror)
+kaggle                   # dataset download (BraTS 2020 mirror)

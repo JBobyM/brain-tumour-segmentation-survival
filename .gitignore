@@ -1,0 +1,28 @@
+# virtual env
+.venv/
+
+# datasets (multi-GB — download via the scripts, see README)
+data/
+
+# large model checkpoints (regenerate via train.py; or host on Releases/LFS)
+checkpoints/*.pth
+
+# generated feature table (regenerate via extract_features.py)
+survival_features.csv
+
+# experiment tracking / logs
+wandb/
+*.log
+
+# python
+__pycache__/
+*.pyc
+
+# jupyter checkpoints
+.ipynb_checkpoints/
+
+# personal notes (not for the public repo)
+write_up
+
+# OS
+.DS_Store
