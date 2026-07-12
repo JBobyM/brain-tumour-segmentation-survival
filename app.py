@@ -52,10 +52,12 @@ def seg_overlay(base, tc, wt, et):
     b = np.rot90(base); vmin, vmax = _window(b)
     fig, ax = plt.subplots(figsize=(5, 5), facecolor="black")
     ax.imshow(b, cmap="gray", vmin=vmin, vmax=vmax)
-    ax.imshow(np.ma.masked_where(np.rot90(wt) == 0, np.rot90(wt)), cmap="Greens", alpha=0.35, vmin=0, vmax=1)
-    ax.imshow(np.ma.masked_where(np.rot90(tc) == 0, np.rot90(tc)), cmap="autumn", alpha=0.5, vmin=0, vmax=1)
-    ax.contour(np.rot90(et), levels=[0.5], colors="cyan", linewidths=1.2)
-    ax.axis("off"); ax.set_title("Segmentation (WT green · TC red · ET cyan)", color="white")
+    # distinct nested outlines: WT (outer) ⊃ TC ⊃ ET (inner)
+    for mask, color in [(wt, "#00ff5f"), (tc, "#ff3b3b"), (et, "#00e5ff")]:
+        m = np.rot90(mask)
+        if m.any():
+            ax.contour(m, levels=[0.5], colors=color, linewidths=1.8)
+    ax.axis("off"); ax.set_title("Segmentation outlines (WT green · TC red · ET cyan)", color="white")
     fig.tight_layout(); return fig
 
 
