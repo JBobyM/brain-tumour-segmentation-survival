@@ -120,10 +120,14 @@ critical **short-survivor class (AUC 0.70)**; the mid class sits near chance
 (AUC 0.50) — a well-documented difficulty in BraTS survival work. Top features are
 age, whole-tumour shape, and enhancement ratios — all clinically plausible.
 
-These absolute numbers are **in line with the published BraTS survival literature**
-(even challenge winners land near 0.5–0.6 3-class accuracy). Survival from imaging is
-genuinely hard; the value here is a well-characterised, honestly-reported result with
-a clear baseline → imaging → upper-bound story.
+**Context, stated precisely.** Survival-from-imaging is genuinely hard: the BraTS
+challenge scores it by *accuracy*, and the best entries reach only ~0.62 (the 2020
+winner: 61.7%; the all-time ceiling ~0.63). Our 3-class **accuracy** is **0.44**
+(0.50 with expert masks) — above random (0.33) and majority-guessing (~0.38), but
+**below** the top challenge entries, not matching them. The **0.62 figure above is
+AUC** (a ranking metric), which is *not* comparable to the challenge's accuracy despite
+sharing the digits. The value here is a well-characterised, honestly-reported result
+with a clear baseline → imaging → upper-bound story — not a claim of state-of-the-art.
 
 ## 5. Explainability — measured, not assumed
 
