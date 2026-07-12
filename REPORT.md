@@ -40,7 +40,7 @@ pipeline and compared on validation Dice:
 | Architecture | Epochs | Mean Dice | TC | WT | ET |
 |---|---|---|---|---|---|
 | U-Net (baseline) | 50 | 0.713 | 0.699 | 0.714 | 0.732 |
-| **SegResNet (adopted)** | 100 | **0.834** | 0.817 | **0.885** | 0.798 |
+| **SegResNet (adopted)** | 100 | **0.834** | 0.820 | **0.889** | 0.797 |
 
 SegResNet (residual encoder–decoder, `init_filters=32`, dropout 0.2) won on every
 region and was adopted; the downstream pipeline (feature extraction, survival model,
@@ -116,8 +116,8 @@ Imaging features add real prognostic signal over the clinical baseline, and the
 ordering *clinical < predicted < expert* quantifies how segmentation quality
 propagates downstream — with SegResNet's better masks the end-to-end AUC (0.616) rose
 toward the expert-mask ceiling (0.650). Per-class ROC shows the model is strongest on the clinically
-critical **short-survivor class (AUC 0.70)**; the mid class sits near chance
-(AUC 0.50) — a well-documented difficulty in BraTS survival work. Top features are
+critical **short-survivor class (AUC 0.67)**; the mid class sits near chance
+(AUC 0.55) — a well-documented difficulty in BraTS survival work. Top features are
 age, whole-tumour shape, and enhancement ratios — all clinically plausible.
 
 **Context, stated precisely.** Survival-from-imaging is genuinely hard: the BraTS

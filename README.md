@@ -114,7 +114,7 @@ tumour, N=20; tumour is ~6% of the brain):
 Imaging features add genuine prognostic signal over clinical data alone — and with the
 better SegResNet masks the end-to-end AUC (0.62) nears the expert-mask upper bound
 (0.65). The model is strongest on the clinically critical **short-survivor class
-(AUC 0.70)**. Survival-from-imaging is a hard task: the best BraTS challenge entries reach
+(AUC 0.67)**. Survival-from-imaging is a hard task: the best BraTS challenge entries reach
 only ~0.62 *accuracy* (ceiling ~0.63). Our 3-class **accuracy** (0.44; 0.50 with expert
 masks) beats random (0.33) and majority-guessing (0.38) but sits **below** those top
 entries — the 0.62 above is AUC, a different metric. Honestly reported, not a SOTA claim.
