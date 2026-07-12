@@ -32,20 +32,29 @@ def get_seg_model():
     return model, float(ckpt.get("dice", float("nan")))
 
 
-def _tf():
+def _tf_geom():
+    # load + orient + resample only — NO intensity normalization, so the raw
+    # FLAIR is kept for a natural, radiology-style display (black background).
     return Compose([
         LoadImaged(keys="image"), EnsureChannelFirstd(keys="image"), EnsureTyped(keys="image"),
         Orientationd(keys="image", axcodes="RAS"),
         Spacingd(keys="image", pixdim=(1.0, 1.0, 1.0), mode="bilinear"),
-        NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
     ])
 
 
+_normalize = NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True)
+
+
 def preprocess(paths):
-    """paths: list of 4 modality file paths -> (img tensor 1x4xHxWxD, flair np)."""
-    data = _tf()({"image": [str(p) for p in paths]})
-    img = data["image"].unsqueeze(0).to(DEVICE)
-    return img, img[0, 0].detach().cpu().numpy()
+    """paths: list of 4 modality file paths -> (model input 1x4xHxWxD, raw FLAIR np).
+
+    The returned FLAIR is the *raw* (un-normalised) volume for display; the model
+    input is the z-score-normalised version.
+    """
+    data = _tf_geom()({"image": [str(p) for p in paths]})
+    display_flair = np.asarray(data["image"][0]).copy()          # raw, for display
+    img = _normalize(dict(data))["image"].unsqueeze(0).to(DEVICE)  # model input
+    return img, display_flair
 
 
 def segment(model, img):

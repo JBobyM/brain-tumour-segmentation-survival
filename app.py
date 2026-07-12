@@ -42,25 +42,33 @@ def run_pipeline(paths, age, gtr, known):
     return dict(flair=flair, masks=masks, feat=feat, cls=cls, proba=proba, cam=cam, dice=dice)
 
 
+def _window(b):
+    """Radiology-style greyscale window: black background, contrast from brain tissue."""
+    v = b[b > 0]
+    return (float(np.percentile(v, 1)), float(np.percentile(v, 99))) if v.size else (None, None)
+
+
 def seg_overlay(base, tc, wt, et):
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax.imshow(np.rot90(base), cmap="gray")
+    b = np.rot90(base); vmin, vmax = _window(b)
+    fig, ax = plt.subplots(figsize=(5, 5), facecolor="black")
+    ax.imshow(b, cmap="gray", vmin=vmin, vmax=vmax)
     ax.imshow(np.ma.masked_where(np.rot90(wt) == 0, np.rot90(wt)), cmap="Greens", alpha=0.35, vmin=0, vmax=1)
     ax.imshow(np.ma.masked_where(np.rot90(tc) == 0, np.rot90(tc)), cmap="autumn", alpha=0.5, vmin=0, vmax=1)
     ax.contour(np.rot90(et), levels=[0.5], colors="cyan", linewidths=1.2)
-    ax.axis("off"); ax.set_title("Segmentation (WT green · TC red · ET cyan)")
+    ax.axis("off"); ax.set_title("Segmentation (WT green · TC red · ET cyan)", color="white")
     fig.tight_layout(); return fig
 
 
 def cam_overlay(base, cam_slice):
-    fig, ax = plt.subplots(figsize=(5, 5))
     b = np.rot90(base); h = np.rot90(cam_slice)
+    vmin, vmax = _window(b)
     brain = b != 0
-    vals = h[brain]
-    vmin, vmax = (float(vals.min()), np.percentile(vals, 99.5)) if vals.size else (0, 1)
-    ax.imshow(b, cmap="gray")
-    ax.imshow(np.ma.masked_where(~brain, h), cmap="jet", alpha=0.5, vmin=vmin, vmax=vmax)
-    ax.axis("off"); ax.set_title("Occlusion sensitivity (whole-tumour)")
+    hv = h[brain]
+    hmin, hmax = (float(hv.min()), np.percentile(hv, 99.5)) if hv.size else (0, 1)
+    fig, ax = plt.subplots(figsize=(5, 5), facecolor="black")
+    ax.imshow(b, cmap="gray", vmin=vmin, vmax=vmax)
+    ax.imshow(np.ma.masked_where(~brain, h), cmap="jet", alpha=0.5, vmin=hmin, vmax=hmax)
+    ax.axis("off"); ax.set_title("Occlusion sensitivity (whole-tumour)", color="white")
     fig.tight_layout(); return fig
 
 
