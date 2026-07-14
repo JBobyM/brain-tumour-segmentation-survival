@@ -82,8 +82,6 @@ Then grab the data and walk the pipeline:
 .venv/bin/streamlit run app.py                # the demo
 ```
 
-Running on a remote box? [ACCESS.md](ACCESS.md) covers the SSH tunnel for the app and notebook.
-
 ## What's in here
 
 | File | What it does |
