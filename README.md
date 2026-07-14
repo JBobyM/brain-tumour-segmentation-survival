@@ -25,6 +25,8 @@ A Streamlit app ties it together: pick a case, run it, scroll through the slices
 
 ![The full pipeline, from MRI to survival prediction](diagram/pipeline_diagram.png)
 
+*Vector version: [pipeline_diagram.pdf](diagram/pipeline_diagram.pdf).*
+
 ## Results, honestly
 
 The segmentation is solid. On held-out validation, whole-tumour Dice is 0.90, core 0.86,
