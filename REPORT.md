@@ -1,178 +1,123 @@
-# Technical Report — Brain Tumour Segmentation & Survival Prediction
+# Technical report
 
-## 1. Introduction
+The deep dive behind the [README](README.md) — same story, more numbers.
 
-Medical imaging data differs fundamentally from natural images: it is stored in
-specialised 3D formats (NIfTI/DICOM), exhibits severe class imbalance (small
-lesions in large volumes of healthy tissue), and carries a high bar for
-interpretability because clinical decisions depend on the output. This project
-builds an end-to-end pipeline that ingests raw multi-modal MRI, segments tumour
-sub-regions, predicts a clinical outcome, and explains its predictions.
+## Data
 
-## 2. Data
+Two datasets, both multi-modal MRI (FLAIR, T1, T1ce, T2), skull-stripped and co-registered.
 
-| | Segmentation | Survival |
-|---|---|---|
-| Dataset | MSD Task01_BrainTumour | BraTS 2020 |
-| Cases | 484 labelled | 235 with survival labels |
-| Modalities | FLAIR, T1w, T1gd, T2w | FLAIR, T1, T1ce, T2 |
-| Labels | edema / non-enhancing / enhancing | overall survival (days), age, resection |
+- **Segmentation:** Medical Segmentation Decathlon Task01, 484 labelled volumes.
+- **Survival:** BraTS 2020, 235 cases with survival labels.
 
-The two datasets are the same MRI family, but the Decathlon release **deliberately
-re-anonymised filenames to prevent linking cases back to BraTS**, so survival
-labels cannot be joined onto the Decathlon volumes. BraTS 2020 (which ships imaging
-*and* `survival_info.csv` under shared IDs) is therefore used for the survival stage.
+They're the same tumours, but Decathlon re-anonymised its filenames on purpose so you
+can't map a case back to BraTS. That's why survival runs on BraTS 2020, which ships the
+outcome labels itself.
 
-## 3. Segmentation
+## Segmentation
 
-**Preprocessing.** Load 4-modality NIfTI → channel-first → RAS orientation →
-1 mm isotropic resampling → per-channel z-score normalisation over non-zero voxels.
-Training uses random 128³ patches with flips and intensity jitter; validation uses
+Preprocessing: 4-modality NIfTI, RAS orientation, 1 mm resampling, per-channel z-score over
+non-zero voxels. Train on random 128³ patches with flips and intensity jitter; validate on
 full volumes with sliding-window inference.
 
-**Targets.** The 3 standard overlapping BraTS regions — TC (tumour core), WT (whole
-tumour), ET (enhancing tumour) — trained as a **multi-label** problem with sigmoid
-activation (the regions are nested, not mutually exclusive).
+The targets are the three overlapping BraTS regions (whole tumour, core, enhancing), trained
+multi-label with sigmoid and Dice loss. The regions are nested, not exclusive, so softmax
+would be wrong.
 
-**Model selection.** Two architectures were trained on the identical data and
-pipeline and compared on validation Dice:
+I trained two architectures on identical setups and kept the winner:
 
 | Architecture | Epochs | Mean Dice | TC | WT | ET |
 |---|---|---|---|---|---|
 | U-Net (baseline) | 50 | 0.713 | 0.699 | 0.714 | 0.732 |
 | **SegResNet (adopted)** | 100 | **0.834** | 0.820 | **0.889** | 0.797 |
 
-SegResNet (residual encoder–decoder, `init_filters=32`, dropout 0.2) won on every
-region and was adopted; the downstream pipeline (feature extraction, survival model,
-demo, explanations) was re-pointed to it. **Dice Loss** (sigmoid) directly optimises
-overlap and handles the severe foreground/background imbalance that would defeat plain
-cross-entropy. Trained with Adam + cosine LR, AMP, `DataParallel` across 2× RTX 3090.
+SegResNet won on every region, so everything downstream uses it. Trained with Adam, cosine
+LR, and mixed precision on two RTX 3090s. On a 30-volume validation subset: WT Dice 0.90
+(sensitivity 0.93), TC 0.86, ET 0.85, specificity ~0.999. About a second per volume, 5.9 GB.
 
-**Result (adopted model).** Best validation **mean Dice 0.834**. On a 30-volume
-voxel-level subset: WT Dice 0.90 / sensitivity 0.93, TC 0.86 / 0.87, ET 0.85 / 0.83;
-specificity ≈ 0.999 throughout. Inference 1.0 s/volume at 5.9 GB peak VRAM.
+### The label bug
 
-### 3.1 Engineering finding — a silent label-convention bug
+The first run gave enhancing-tumour Dice of exactly 0.0 for all 50 epochs. MONAI's built-in
+BraTS label converter expects labels 1/2/4; Decathlon uses 1/2/3. There is no label 4, so
+the enhancing channel came out empty and the core channel was mislocated. I trained against
+scrambled targets until I printed the per-channel voxel counts. A custom converter (core =
+2 or 3, whole = 1/2/3, enhancing = 3) fixed it and took mean Dice from 0.49 to 0.71. Lesson:
+run `np.unique` on your labels before trusting any transform.
 
-The first training run produced **ET Dice = 0.0000 for all 50 epochs** and WT capped
-at 0.52. Root cause: MONAI's built-in `ConvertToMultiChannelBasedOnBratsClassesd`
-assumes the *original* BraTS label convention (1 = core, 2 = edema, 4 = ET), but
-Decathlon Task01 uses **1 = edema, 2 = non-enhancing, 3 = enhancing** — there is no
-label 4. The transform therefore built an all-empty ET channel and a mislocated TC
-channel, training the model against scrambled targets.
-
-The fix was a custom `ConvertDecathlonBratsLabelsd` transform (TC = 2∨3, WT = 1∨2∨3,
-ET = 3), verified by voxel counts and the nesting invariant WT ⊇ TC ⊇ ET. This lifted
-mean Dice **0.488 → 0.713** and ET from **0.0 → 0.73**.
-*Takeaway: always inspect `np.unique(labels)` and per-channel voxel counts before
-trusting a dataset's label transform.*
-
-### 3.2 Predicted vs ground truth
+### Predicted vs ground truth
 
 ![Predicted vs ground-truth segmentation](pred_vs_gt_segmentation.png)
 
-*Each row is one patient — the best, a typical (median), and the worst case by Dice
-score. **Ground truth** (green) is the tumour region an expert radiologist outlined by
-hand; **Predicted** (red) is what the model produced with no human input. The **error
-map** compares them: green = correct, red = tumour the model missed, orange = tissue
-the model wrongly flagged. A near-perfect result is almost all green (see "Best", Dice
-0.97). Even the worst case (0.80) captures the tumour, with the main error being edge
-over-segmentation.*
+*Best, median, and worst case by Dice. Green is the expert outline, red is the model's, and
+the error map shows where they agree (green), where the model missed tumour (red), and where
+it over-called (orange). Even the worst case (0.80) finds the tumour.*
 
 ![Predicted vs expert tumour volume](pred_vs_gt_volume.png)
 
-*Each dot is one of 235 patients. The horizontal axis is the tumour volume the expert
-measured; the vertical axis is the volume the model measured. The dashed line is perfect
-agreement — the tighter the dots hug it, the more accurately the model measures tumour
-size. Correlations are high across all sub-regions (TC r=0.98, WT r=0.97, ET r=0.93),
-confirming the model measures tumour burden — not just location — reliably, which is
-what makes the downstream survival features trustworthy.*
+*Predicted vs expert tumour volume, one dot per patient. The closer to the diagonal, the
+better the model measures size. Correlations are 0.98 (core), 0.97 (whole), 0.93 (enhancing),
+which is what makes the survival features trustworthy.*
 
-## 4. Survival prediction
+## Survival
 
-**Task.** 3-class overall survival, per the BraTS challenge convention:
-short (<10 mo / <300 d), mid (10–15 mo / 300–450 d), long (>15 mo / >450 d).
-Classes are reasonably balanced (89 / 59 / 86).
+3-class survival with the BraTS cutoffs: short (<10 months), mid (10–15), long (>15). The
+classes are roughly balanced (89/59/86).
 
-**Features.** The segmentation model (SegResNet) is run end-to-end on each BraTS case
-to produce predicted masks, from which interpretable features are derived — per-region volumes
-(TC/WT/ET, necrotic core, edema), ratios (enhancing fraction ET/WT, core fraction),
-and whole-tumour shape (bounding-box extent, compactness) — plus clinical covariates
-(age, resection status). Features are also computed from the **expert masks** as an
-upper bound.
+For each case I run the segmentation model, turn the predicted masks into features
+(per-region volumes, ratios like enhancing fraction, whole-tumour shape), and add age and
+resection status. A random forest classifies them, scored with stratified 5-fold
+cross-validation. I compute the same features from the expert masks too, as an upper bound.
 
-**Model.** Random Forest (balanced class weights), evaluated with stratified 5-fold
-cross-validation. Metric: accuracy + **macro one-vs-rest ROC-AUC** (per the proposal).
-
-**Results (full cohort, n = 234):**
-
-| Feature set | Accuracy | Macro AUC |
+| Features | Accuracy | Macro AUC |
 |---|---|---|
-| Clinical only (baseline) | 0.406 | 0.556 |
-| Predicted masks (end-to-end, SegResNet) | 0.444 | **0.616** |
-| Expert masks (upper bound) | 0.500 | **0.650** |
+| Clinical only (baseline) | 0.41 | 0.56 |
+| Predicted masks (end-to-end) | 0.44 | **0.62** |
+| Expert masks (upper bound) | 0.50 | 0.65 |
 
-Imaging features add real prognostic signal over the clinical baseline, and the
-ordering *clinical < predicted < expert* quantifies how segmentation quality
-propagates downstream — with SegResNet's better masks the end-to-end AUC (0.616) rose
-toward the expert-mask ceiling (0.650). Per-class ROC shows the model is strongest on the clinically
-critical **short-survivor class (AUC 0.67)**; the mid class sits near chance
-(AUC 0.55) — a well-documented difficulty in BraTS survival work. Top features are
-age, whole-tumour shape, and enhancement ratios — all clinically plausible.
+Imaging helps: adding it to age-and-surgery lifts macro AUC from 0.56 to 0.62, close to the
+expert-mask ceiling of 0.65. The model is best on short survivors (AUC 0.67) and near chance
+on the mid class (0.55), which is the known hard case.
 
-**Context, stated precisely.** Survival-from-imaging is genuinely hard: the BraTS
-challenge scores it by *accuracy*, and the best entries reach only ~0.62 (the 2020
-winner: 61.7%; the all-time ceiling ~0.63). Our 3-class **accuracy** is **0.44**
-(0.50 with expert masks) — above random (0.33) and majority-guessing (~0.38), but
-**below** the top challenge entries, not matching them. The **0.62 figure above is
-AUC** (a ranking metric), which is *not* comparable to the challenge's accuracy despite
-sharing the digits. The value here is a well-characterised, honestly-reported result
-with a clear baseline → imaging → upper-bound story — not a claim of state-of-the-art.
+One thing to be precise about: the BraTS challenge scores this by accuracy, and the best
+entries only reach about 0.62 (2020 winner 61.7%, all-time ceiling ~0.63). My accuracy is
+0.44 (0.50 with expert masks) — above the baselines, below the top entries. The 0.62 I quote
+is AUC, a different metric; don't confuse the two. Honest result on a hard task, not a
+state-of-the-art claim.
 
-## 5. Explainability — measured, not assumed
+## Explainability
 
-Rather than present a heatmap and assume it is meaningful, explanation quality was
-**quantified** against ground-truth tumour masks (N=20) with three localisation
-metrics: *concentration* (heat energy inside tumour ÷ tumour volume fraction; >1 beats
-random), *pointing game* (does the hottest voxel fall in the tumour?), and
-*inside/outside* (mean heat inside vs outside tumour).
+I didn't want to ship a heatmap I couldn't defend, so I measured it. Three localisation
+scores against the expert masks (N=20): concentration (heat inside the tumour vs its size,
+where >1 beats random), pointing game (does the hottest voxel land in the tumour), and
+inside-vs-outside heat.
 
 | Method | Concentration | Pointing game | Inside/outside |
 |---|---|---|---|
-| **Grad-CAM** | 0.9× | 0% | 0.9× |
+| Grad-CAM | 0.9× | 0% | 0.9× |
 | **Occlusion sensitivity** | **6.2×** | **50%** | **8.6×** |
 
-**Grad-CAM fails on this task.** Designed for classification CNNs, it produces diffuse
-maps on a segmentation network (a per-voxel, context-driven decision); its
-concentration of 0.9× is *worse than random* and its peak never lands in the tumour.
-**Occlusion sensitivity** — mask a region, measure the drop in predicted tumour mass —
-is perturbation-based and suited to segmentation: it concentrates 6.2× on the tumour
-and its peak lands inside half the time (the tumour is only ~6% of the brain). It is
-the adopted explanation method; the Grad-CAM analysis is retained as a documented
-negative result. For speed the perturbation loop runs on a 2× downsampled volume
-(~8 s/case) and the map is upsampled back.
+Grad-CAM fails here. It's built for classification, and on a segmentation network the map is
+diffuse — worse than random, with its peak never inside the tumour. Occlusion sensitivity
+(hide a patch, measure how much the tumour prediction drops) is the right tool: 6× more
+concentrated on the tumour, hitting it half the time. I kept the Grad-CAM analysis in the
+repo as a documented negative result. The occlusion loop runs on a 2× downsampled volume for
+speed (~8 s/case).
 
-## 6. Deployment
+## Deployment
 
-A Streamlit app (`app.py`) exposes the full pipeline: select a bundled sample case or
-upload four modalities → segmentation overlay with a slice slider → survival class and
-probabilities (with ground-truth comparison for samples) → occlusion-sensitivity
-overlay → tumour volume metrics.
+A Streamlit app (`app.py`) runs the whole thing: pick a case or upload four modalities,
+segment, get the survival class and probabilities, see the occlusion overlay and tumour
+volumes, scroll the slices.
 
-## 7. Limitations & future work
+## Limitations
 
-- **Segmentation** is trained on Decathlon and applied to BraTS 2020 (a domain shift).
-  Adopting SegResNet already lifted WT Dice to 0.89; fine-tuning directly on BraTS or
-  larger patches could close the residual gap further.
-- **Survival** has small N (235; ~118 GTR-only) and modest AUC, consistent with the
-  literature. Deep encoder features, radiomics, or a survival-analysis model (Cox /
-  time-to-event) are natural next steps.
-- **Explainability** now uses occlusion sensitivity (validated at 6.2× concentration).
-  SHAP on the survival features would extend interpretability to the prognosis stage
-  (feature importances are already reported).
+- Segmentation trains on Decathlon and runs on BraTS 2020, so there's a domain shift.
+  Fine-tuning on BraTS would help.
+- Survival has small N (235) and modest AUC, in line with the literature. A proper
+  time-to-event model (Cox) or radiomic features are the obvious next steps.
+- SHAP on the survival features would extend the explainability to the prognosis side.
 
-## 8. Reproducibility
+## Reproducing
 
-All stages are scripted and seeded where applicable; see `README.md` for exact
-commands. Environment pinned in `requirements.txt`; segmentation training tracked in
-Weights & Biases.
+Everything is scripted and seeded where it matters; the commands are in the README. The
+environment is pinned in `requirements.txt`, and segmentation training is logged to Weights
+& Biases.
