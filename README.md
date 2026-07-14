@@ -6,9 +6,10 @@ PyTorch and MONAI.
 
 ![Predicted tumour segmentation vs the expert ground truth](pred_vs_gt_segmentation.png)
 
-*The model's tumour outline (red) against an expert radiologist's (green), for the best, a
-typical, and the worst case. The error map shows where they agree (green), where the model
-missed tumour (red), and where it over-called (orange).*
+**Figure 1.** Predicted tumour segmentation versus expert ground truth, for the best, a
+median, and the worst case by Dice score. The model's outline (red) is overlaid on the
+expert radiologist's (green); the error map marks correct voxels (green), missed tumour
+(red), and over-segmentation (orange).
 
 ## What it does
 
@@ -25,7 +26,11 @@ A Streamlit app ties it together: pick a case, run it, scroll through the slices
 
 ![The full pipeline, from MRI to survival prediction](diagram/pipeline_diagram.png)
 
-*Vector version: [pipeline_diagram.pdf](diagram/pipeline_diagram.pdf).*
+**Figure 2.** End-to-end brain-tumour MRI pipeline. A 4-channel 3D MRI volume (FLAIR, T1,
+T1ce, T2) is segmented by a SegResNet deep-learning model into whole-tumour, tumour-core,
+and enhancing-tumour regions, with an occlusion map for explainability. The resulting
+segmentation features feed a Random Forest classifier that predicts patient survival.
+([vector PDF](diagram/pipeline_diagram.pdf))
 
 ## Results, honestly
 
