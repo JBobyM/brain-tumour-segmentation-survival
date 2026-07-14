@@ -4,6 +4,10 @@ A pipeline that reads a brain MRI, finds the tumour, measures it, and estimates 
 patient's survival window, then shows which part of the scan drove that call. Built with
 PyTorch and MONAI.
 
+![The Streamlit demo in action](assets/demo.gif)
+
+*The demo: pick a case, and it segments the tumour, predicts survival, and shows what it looked at.*
+
 ![Predicted tumour segmentation vs the expert ground truth](pred_vs_gt_segmentation.png)
 
 **Figure 1.** Predicted tumour segmentation versus expert ground truth, for the best, a
