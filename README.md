@@ -4,7 +4,11 @@ A pipeline that reads a brain MRI, finds the tumour, measures it, and estimates 
 patient's survival window, then shows which part of the scan drove that call. Built with
 PyTorch and MONAI.
 
-![Occlusion-sensitivity overlays](occlusion_overlays.png)
+![Predicted tumour segmentation vs the expert ground truth](pred_vs_gt_segmentation.png)
+
+*The model's tumour outline (red) against an expert radiologist's (green), for the best, a
+typical, and the worst case. The error map shows where they agree (green), where the model
+missed tumour (red), and where it over-called (orange).*
 
 ## What it does
 
@@ -19,6 +23,8 @@ Feed it the four MRI sequences a radiologist uses (FLAIR, T1, T1ce, T2) and it:
 
 A Streamlit app ties it together: pick a case, run it, scroll through the slices.
 
+![The full pipeline, from MRI to survival prediction](diagram/pipeline_diagram.png)
+
 ## Results, honestly
 
 The segmentation is solid. On held-out validation, whole-tumour Dice is 0.90, core 0.86,
@@ -26,12 +32,13 @@ and enhancing 0.85, with sensitivity above 0.83 everywhere, so it rarely misses 
 tumour. It runs in about a second per volume and fits in 6 GB, so you don't need a special
 machine.
 
-Survival is the hard part, and I won't dress it up. My 3-class accuracy is 0.44 (0.50 if I
-hand it the expert masks instead of its own). That beats random (0.33) and always guessing
-the biggest class (0.38), but it sits below the best BraTS challenge entries, which top out
-near 0.62 accuracy. Predicting survival from a scan is just hard. What I can show is that
-the imaging adds real signal on top of age and surgery alone (AUC 0.56 to 0.62), and the
-model is best at flagging the short-survivor cases, which are the ones you most want to catch.
+Survival is the hard part. The good news first: the tumour features carry real prognostic
+signal. Adding them on top of age and surgery lifts the model's ranking ability (macro AUC
+0.56 to 0.62), and it's best at catching short-survivor cases, which are the ones you most
+want to flag. The honest caveat: 3-class accuracy is 0.44 (0.50 with the expert masks). That
+beats random (0.33) and always guessing the biggest class (0.38), but it's below the best
+BraTS challenge entries, which top out near 0.62. Predicting survival from a scan is just
+hard, and I'd rather say that plainly than dress it up.
 
 ## The parts I'm actually proud of
 
