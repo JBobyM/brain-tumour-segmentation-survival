@@ -1,80 +1,75 @@
 # Brain tumour segmentation and survival prediction from MRI
 
-A pipeline that reads a brain MRI, finds the tumour, measures it, and estimates the
-patient's survival window, then shows which part of the scan drove that call. Built with
-PyTorch and MONAI.
+This project combines brain tumour segmentation, feature extraction, and survival classification from multi-modal MRI. It uses a 3D SegResNet built with PyTorch and MONAI for segmentation, followed by a random forest classifier for survival prediction.
+
+The Streamlit app lets you explore a case, view the predicted segmentation, and inspect occlusion maps alongside the survival prediction.
 
 ![The Streamlit demo in action](assets/demo.gif)
 
-*The demo: pick a case, and it segments the tumour, predicts survival, and shows what it looked at.*
-
 ![Predicted tumour segmentation vs the expert ground truth](pred_vs_gt_segmentation.png)
 
-**Figure 1.** Predicted tumour segmentation versus expert ground truth, for the best, a
-median, and the worst case by Dice score. The model's outline (red) is overlaid on the
-expert radiologist's (green); the error map marks correct voxels (green), missed tumour
-(red), and over-segmentation (orange).
+**Figure 1.** Segmentation results for the best, median, and worst validation cases by Dice score. Predicted contours are shown in red and reference contours in green. The error maps show correctly segmented tumour voxels in green, missed tumour in red, and over-segmentation in orange.
 
-## What it does
+## Pipeline
 
-Feed it the four MRI sequences a radiologist uses (FLAIR, T1, T1ce, T2) and it:
+The input consists of four MRI sequences: FLAIR, T1, T1ce, and T2.
 
-1. Segments the tumour into its three regions (whole tumour, core, enhancing) with a 3D SegResNet.
-2. Turns the masks into measurements: volumes, shape, how much of the tumour is actively growing.
-3. Passes those, plus the patient's age and surgery status, to a random forest that sorts
-   the case into a short / mid / long survival group.
-4. Draws an occlusion map over the scan so you can see where the segmentation model was
-   actually looking.
-
-A Streamlit app ties it together: pick a case, run it, scroll through the slices.
+1. A 3D SegResNet predicts whole-tumour, tumour-core, and enhancing-tumour masks.
+2. The masks are used to calculate tumour volumes, shape features, and relative proportions of the tumour regions.
+3. A random forest combines these features with age and surgery status to predict a short, medium, or long survival group.
+4. Occlusion sensitivity maps show how the segmentation output changes when parts of the input are obscured.
 
 ![The full pipeline, from MRI to survival prediction](diagram/pipeline_diagram.png)
 
-**Figure 2.** End-to-end brain-tumour MRI pipeline. A 4-channel 3D MRI volume (FLAIR, T1,
-T1ce, T2) is segmented by a SegResNet deep-learning model into whole-tumour, tumour-core,
-and enhancing-tumour regions, with an occlusion map for explainability. The resulting
-segmentation features feed a Random Forest classifier that predicts patient survival.
-([vector PDF](diagram/pipeline_diagram.pdf))
+**Figure 2.** MRI preprocessing, segmentation, feature extraction, and survival classification. [View the vector PDF](diagram/pipeline_diagram.pdf).
 
-## Results, honestly
+## Results
 
-The segmentation is solid. On held-out validation, whole-tumour Dice is 0.90, core 0.86,
-and enhancing 0.85, with sensitivity above 0.83 everywhere, so it rarely misses real
-tumour. It runs in about a second per volume and fits in 6 GB, so you don't need a special
-machine.
+### Segmentation
 
-Survival is the hard part. The good news first: the tumour features carry real prognostic
-signal. Adding them on top of age and surgery lifts the model's ranking ability (macro AUC
-0.56 to 0.62), and it's best at catching short-survivor cases, which are the ones you most
-want to flag. The honest caveat: 3-class accuracy is 0.44 (0.50 with the expert masks). That
-beats random (0.33) and always guessing the biggest class (0.38), but it's below the best
-BraTS challenge entries, which top out near 0.62. Predicting survival from a scan is just
-hard, and I'd rather say that plainly than dress it up.
+On the held-out validation set:
 
-## The parts I'm actually proud of
+| Region | Dice score |
+|---|---:|
+| Whole tumour | 0.90 |
+| Tumour core | 0.86 |
+| Enhancing tumour | 0.85 |
 
-The models were the easy bit. The work that mattered was catching things that would have
-quietly ruined the results.
+Sensitivity exceeded 0.83 for all three regions. Measured inference time was approximately one second per volume, with GPU memory usage around 6 GB.
 
-A label bug cost me a full training run. MONAI's built-in BraTS label converter expects the
-labels 1/2/4, but the Decathlon dataset uses 1/2/3. So the enhancing-tumour channel came out
-empty and I trained against broken targets for 50 epochs before I thought to print the
-per-channel voxel counts. Fixing it took mean Dice from 0.49 to 0.71.
+### Survival classification
 
-I picked the architecture by measuring, not by preference. U-Net and SegResNet, same data,
-same everything. SegResNet won on every region (whole-tumour Dice went 0.71 to 0.89), so I
-switched and re-ran the rest of the pipeline on it.
+Adding tumour features to age and surgery status increased macro AUC from 0.56 to 0.62. The classifier performed best at identifying the short-survival group.
 
-And I didn't trust my own explanations. Grad-CAM gave me nice-looking heatmaps, so I checked
-whether they actually landed on the tumour. They didn't; the hottest spot was inside the
-tumour 0% of the time. I replaced it with occlusion sensitivity and scored it the same way:
-it hits the tumour about half the time and concentrates there roughly 6x more than chance.
+Three-class accuracy was 0.44 using predicted masks and 0.50 using reference masks. For comparison, uniform random guessing gives an expected accuracy of 0.33, and the majority-class baseline achieved 0.38.
 
-The full write-up, with every number and the limitations, is in [REPORT.md](REPORT.md).
+These results suggest that the extracted features contain useful prognostic information, but survival classification remains a limitation of the pipeline.
 
-## Running it
+See [REPORT.md](REPORT.md) for the full evaluation and limitations.
 
-You'll need a CUDA GPU. Set up the environment:
+## Development notes
+
+Several checks changed how I built and evaluated the pipeline.
+
+### Fixing the segmentation labels
+
+MONAI’s built-in BraTS label converter expects labels 1, 2, and 4. The Decathlon dataset uses 1, 2, and 3. This mismatch produced an empty enhancing-tumour target channel.
+
+I found the issue after a 50-epoch training run by checking the voxel counts in each target channel. Correcting the label conversion increased mean Dice from 0.49 to 0.71.
+
+### Comparing architectures
+
+I compared U-Net and SegResNet under the same training setup. SegResNet performed better across all three tumour regions, increasing whole-tumour Dice from 0.71 to 0.89. I used it for the remaining experiments.
+
+### Checking the explanation maps
+
+The Grad-CAM maps looked plausible, but their highest-activation voxel fell inside the tumour in 0% of the evaluated cases.
+
+I replaced Grad-CAM with occlusion sensitivity and evaluated it using the same spatial checks. Its highest-scoring voxel fell inside the tumour in roughly half the cases, and the maps concentrated on tumour regions about six times more than expected by chance.
+
+## Setup and usage
+
+The setup below uses a CUDA GPU and the PyTorch CUDA 12.8 build.
 
 ```bash
 python3 -m venv .venv
@@ -82,41 +77,57 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-The `cu128` torch build matters. The default PyPI wheel targets CUDA 13 and will report no
-GPU on a 12.8 driver.
+### Download the datasets
 
-Then grab the data and walk the pipeline:
+The downloads are approximately 7 GB and 4.5 GB.
 
 ```bash
-# datasets (~7 GB + ~4.5 GB)
 .venv/bin/hf download Novel-BioMedAI/Medical_Segmentation_Decathlon Task01_BrainTumour.tar \
-    --repo-type dataset --local-dir data/ && tar -xf data/Task01_BrainTumour.tar -C data/
-.venv/bin/kaggle datasets download awsaf49/brats20-dataset-training-validation -p data/brats2020 --unzip
+    --repo-type dataset --local-dir data/
 
-.venv/bin/jupyter notebook eda.ipynb          # start here: look at the data
-.venv/bin/python train.py --arch segresnet --epochs 100 --cache-rate 0.3
-.venv/bin/python extract_features.py
-.venv/bin/python train_survival.py && .venv/bin/python save_survival_model.py
-.venv/bin/streamlit run app.py                # the demo
+tar -xf data/Task01_BrainTumour.tar -C data/
+
+.venv/bin/kaggle datasets download \
+    awsaf49/brats20-dataset-training-validation \
+    -p data/brats2020 --unzip
 ```
 
-## What's in here
+### Run the pipeline
 
-| File | What it does |
+Start with the exploration notebook, then train the segmentation model and survival classifier.
+
+```bash
+.venv/bin/jupyter notebook eda.ipynb
+
+.venv/bin/python train.py --arch segresnet --epochs 100 --cache-rate 0.3
+
+.venv/bin/python extract_features.py
+
+.venv/bin/python train_survival.py
+.venv/bin/python save_survival_model.py
+```
+
+Launch the app:
+
+```bash
+.venv/bin/streamlit run app.py
+```
+
+## Repository structure
+
+| File | Purpose |
 |---|---|
-| `eda.ipynb` | Data exploration: modalities, class imbalance, what relates to survival |
-| `data_pipeline.py` | Preprocessing and loaders (plus the label fix) |
-| `seg_model.py`, `train.py` | Segmentation model and training (`--arch unet` or `segresnet`) |
-| `extract_features.py` | Turns masks into tumour features |
-| `train_survival.py`, `save_survival_model.py` | The survival classifier |
-| `occlusion.py`, `gradcam.py` | The explanation that works, and the one that didn't |
-| `measure_metrics.py`, `measure_gradcam.py` | The benchmarks behind the numbers above |
-| `inference.py`, `app.py` | Shared inference code and the Streamlit app |
+| `eda.ipynb` | Exploration of MRI sequences, class imbalance, and survival data |
+| `data_pipeline.py` | Preprocessing, label conversion, and data loaders |
+| `seg_model.py`, `train.py` | Segmentation architectures and training |
+| `extract_features.py` | Extraction of tumour features from segmentation masks |
+| `train_survival.py`, `save_survival_model.py` | Survival classifier training and export |
+| `occlusion.py`, `gradcam.py` | Occlusion sensitivity and Grad-CAM implementations |
+| `measure_metrics.py`, `measure_gradcam.py` | Segmentation and explanation-map evaluation |
+| `inference.py`, `app.py` | Inference pipeline and Streamlit interface |
 
-## Data and credits
+## Data
 
-Segmentation trains on the [Medical Segmentation Decathlon](http://medicaldecathlon.com/)
-(Task01). Survival uses [BraTS 2020](https://www.med.upenn.edu/cbica/brats2020/), the only
-one of the two with outcome labels. Both are multi-modal MRI, skull-stripped and
-co-registered. The datasets belong to their providers (MSD, BraTS/CBICA); the code here is
-for research and portfolio use.
+Segmentation training uses the [Medical Segmentation Decathlon](http://medicaldecathlon.com/) Task01 BrainTumour dataset. Survival classification uses [BraTS 2020](https://www.med.upenn.edu/cbica/brats2020/), which includes survival outcomes.
+
+Both datasets contain skull-stripped, co-registered, multi-modal MRI scans. The datasets remain subject to their providers’ terms of use.
