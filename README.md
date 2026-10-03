@@ -1,12 +1,20 @@
-# Brain tumour segmentation and survival prediction from MRI
+<h1 align="center">Brain tumour segmentation and survival prediction from MRI</h1>
 
-This project combines brain tumour segmentation, feature extraction, and survival classification from multi-modal MRI. It uses a 3D SegResNet built with PyTorch and MONAI for segmentation, followed by a random forest classifier for survival prediction.
+<p align="center">
+  This project combines brain tumour segmentation, feature extraction, and survival classification from multi-modal MRI. It uses a 3D SegResNet built with PyTorch and MONAI for segmentation, followed by a random forest classifier for survival prediction.
+</p>
 
-The Streamlit app lets you explore a case, view the predicted segmentation, and inspect occlusion maps alongside the survival prediction.
+<p align="center">
+  The Streamlit app lets you explore a case, view the predicted segmentation, and inspect occlusion maps alongside the survival prediction.
+</p>
 
-![The Streamlit demo in action](assets/demo.gif)
+<p align="center">
+  <img src="assets/demo.gif" alt="The Streamlit demo in action">
+</p>
 
-![Predicted tumour segmentation vs the expert ground truth](pred_vs_gt_segmentation.png)
+<p align="center">
+  <img src="pred_vs_gt_segmentation.png" alt="Predicted tumour segmentation vs the expert ground truth">
+</p>
 
 **Figure 1.** Segmentation results for the best, median, and worst validation cases by Dice score. Predicted contours are shown in red and reference contours in green. The error maps show correctly segmented tumour voxels in green, missed tumour in red, and over-segmentation in orange.
 
